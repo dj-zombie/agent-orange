@@ -50,6 +50,7 @@ rescue => e
  end
 
 if wlan && token
+  `gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock`
   gpsd = GpsdClient::Gpsd.new()
   gpsd.start()
 
@@ -92,8 +93,11 @@ if wlan && token
           }
           if gpsd.started?
             pos = gpsd.get_position 
-            new_hash[:latitude] = pos[:lat]
-            new_hash[:longitude] = pos[:lon]
+	    last_lat = pos[:lat] unless pos[:lat].nil?
+	    last_lon = pos[:lon] unless pos[:lon].nil?
+			
+	    new_hash[:latitude] = pos[:lat].nil? ? pos[:lat] : last_lat
+	    new_hash[:longitude] = pos[:lon].nil? ? pos[:lon] : last_lon
             puts "We have GPS! lat: #{ pos[:lat] }, lon: #{ pos[:lon] }"
           end
           begin
