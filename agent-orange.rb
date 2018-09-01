@@ -5,6 +5,8 @@ require 'json'
 require 'set'
 require 'colorize'
 require 'dotenv/load'
+require 'gpsd_client'
+
 
 puts <<-'EOF'
  ▄▄▄·  ▄▄ • ▄▄▄ . ▐ ▄ ▄▄▄▄▄      ▄▄▄   ▄▄▄·  ▐ ▄  ▄▄ • ▄▄▄ .
@@ -48,7 +50,9 @@ rescue => e
  end
 
 if wlan && token
-  
+  gpsd = GpsdClient::Gpsd.new()
+  gpsd.start()
+
   `ip link set #{ iface } down`
   if country == 'GY'
     puts 'WARNING: Setting country code to GY and txpower 30. You must be in be in a country that meets these regulations.'.yellow
@@ -77,7 +81,7 @@ if wlan && token
         seen = hashes                
         difference.each do |h|
           ssid = h.split("*")[3].gsub(/../) { |pair| pair.hex.chr }
-          puts "\nFound new SSID!".red + "   💀   " + " #{ ssid }".light_cyan
+          puts "\nFound new SSID!".red + "   💀   " + " #{ ssid }".light_cyan          
           new_hash = {
             name: ssid,
             hash: '',
@@ -86,6 +90,12 @@ if wlan && token
             hashmode: '16800',
             hashstring: h
           }
+          if gpsd.started?
+            pos = gpsd.get_position 
+            new_hash[:latitude] = pos[:lat]
+            new_hash[:longitude] = pos[:lon]
+            puts "We have GPS! lat: #{ pos[:lat] }, lon: #{ pos[:lon] }"
+          end
           begin
             hash_res = RestClient.post(server + '/api/hashes/insert', new_hash.to_json, auth.merge({ content_type: :json, accept: :json }))
           rescue => e
