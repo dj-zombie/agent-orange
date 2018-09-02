@@ -51,8 +51,17 @@ rescue => e
 
 if wlan && token
   `gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock`
+  puts "Waiting for GPS..."
+  sleep 10
   gpsd = GpsdClient::Gpsd.new()
   gpsd.start()
+  if !gpsd.started?
+	  puts "Waiting for GPS....."
+	  sleep 130
+	  gpsd = GpsdClient::Gpsd.new()
+	  gpsd.start()
+  end
+
 
   `ip link set #{ iface } down`
   if country == 'GY'
