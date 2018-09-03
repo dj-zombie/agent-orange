@@ -45,12 +45,16 @@ rescue Errno::ECONNREFUSED, Net::ReadTimeout => e
 rescue RestClient::ExceptionWithResponse => e  
   puts 'Error Logging in.'.red
   p e.response
+  sleep 5
+  retry
 rescue RestClient::Unauthorized, RestClient::Forbidden => e
   puts 'Access denied'.red
   p e.response
 rescue => e
   puts 'Error logging in'.red
   p e
+  sleep 5
+  retry
  end
 
 if wlan && token
@@ -107,11 +111,11 @@ if wlan && token
           }
           if gpsd.started?
             pos = gpsd.get_position 
-	    last_lat = pos[:lat] unless pos[:lat].nil?
-	    last_lon = pos[:lon] unless pos[:lon].nil?
-			
-	    new_hash[:latitude] = pos[:lat].nil? ? pos[:lat] : last_lat
-	    new_hash[:longitude] = pos[:lon].nil? ? pos[:lon] : last_lon
+      	    last_lat = pos[:lat] unless pos[:lat].nil?
+      	    last_lon = pos[:lon] unless pos[:lon].nil?
+      			
+      	    new_hash[:latitude] = pos[:lat].nil? ? pos[:lat] : last_lat
+      	    new_hash[:longitude] = pos[:lon].nil? ? pos[:lon] : last_lon
             puts "We have GPS! lat: #{ pos[:lat] }, lon: #{ pos[:lon] }"
           end
           begin
