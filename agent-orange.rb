@@ -7,7 +7,7 @@ require 'colorize'
 require 'dotenv/load'
 require 'gpsd_client'
 
-
+begin
 puts <<-'EOF'
  ▄▄▄·  ▄▄ • ▄▄▄ . ▐ ▄ ▄▄▄▄▄      ▄▄▄   ▄▄▄·  ▐ ▄  ▄▄ • ▄▄▄ .
 ▐█ ▀█ ▐█ ▀ ▪▀▄.▀·•█▌▐█•██  ▪     ▀▄ █·▐█ ▀█ •█▌▐█▐█ ▀ ▪▀▄.▀·
@@ -56,7 +56,8 @@ rescue => e
 if wlan && token
   `gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock`
   puts "Waiting for GPS..."
-  sleep 10
+  sleep 3
+  # sleep 10
   gpsd = GpsdClient::Gpsd.new()
   gpsd.start()
   if !gpsd.started?
@@ -77,9 +78,9 @@ if wlan && token
   `iw dev #{ iface } set type monitor`  
   `ip link set #{ iface } up`  
   puts 'cleaning up logs...'.light_cyan
-  `rm logs/*`
-  `rm pcapng/*`
-  `rm pmkid/*`
+  `rm -r logs/*`
+  `rm -r pcapng/*`
+  `rm -r pmkid/*`
   puts 'starting capture...'.light_green
   dump_cmd = "hcxdumptool -i #{ iface } -o pcapng/#{ timestamp }.pcapng -t 5 --enable_status >> logs/#{ timestamp }.log 2>&1"
   IO.popen(dump_cmd, 'w')
@@ -153,24 +154,43 @@ if wlan && token
   listener.start
 else
   puts 'Error: Unable to start agent.'.red
-  exit!
+  exit
 end
 
 # Look for PMKIDs
+cnt = 0
 loop do
   $stdout.flush
   tail = `tail -n 7 logs/#{ timestamp }.log`
-  if tail
+  if tail.length > 1
     line = tail.split("\n")
-    print 'hcxpcaptool: '.red + line[0].split("[").last.delete("]") + "\n"
+    print "hcxpcaptool[#{ cnt }]: ".red + line[0].split("[").last + "\n" #.delete("]") + "\n"
     found = line.grep(/FOUND PMKID/)[0]
   end
   if found
     `rm pmkid/#{ timestamp }.16800` unless seen.empty?
     `hcxpcaptool -z pmkid/#{ timestamp }.16800 pcapng/#{ timestamp }.pcapng`
     found = nil
+    cnt = 0
+  end
+  cnt += 1
+
+  if cnt > 30
+    puts "RESTARTING!!!".yellow
+    `killall hcxdumptool`    
+    sleep 3
+    exec './agent-orange.rb'
+    sleep 3
+    exit
   end
 
   # Loop forever
   sleep 1
+end
+
+at_exit { p `killall hcxdumptool` }
+
+rescue Exception => e
+  puts "Exception #{ e }"
+  `killall hcxdumptool`
 end
