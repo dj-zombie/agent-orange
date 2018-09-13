@@ -58,17 +58,18 @@ rescue => e
  end
 
 if wlan && token
-  `gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock`
-  puts "Waiting for GPS..."
-  sleep 3
-  # sleep 10
-  gpsd = GpsdClient::Gpsd.new()
-  gpsd.start()
-  if !gpsd.started?
-	  puts "Waiting for GPS....."
-	  sleep 130
-	  gpsd = GpsdClient::Gpsd.new()
-	  gpsd.start()
+  unless ARGV.include?('-gpsoff')
+    `gpsd /dev/ttyUSB0 -F /var/run/gpsd.sock`
+    puts "Waiting for GPS..."
+    sleep 3
+    gpsd = GpsdClient::Gpsd.new()
+    gpsd.start()
+    if !gpsd.started?
+  	  puts "Waiting for GPS....."
+  	  sleep 130
+  	  gpsd = GpsdClient::Gpsd.new()
+  	  gpsd.start()
+    end
   end
 
 
@@ -109,7 +110,7 @@ if wlan && token
             hashmode: '16800',
             hashstring: h
           }
-          if gpsd.started?
+          if gpsd.started? && !ARGV.include?('gpsoff')
             pos = gpsd.get_position 
       	    last_lat = pos[:lat] unless pos[:lat].nil?
       	    last_lon = pos[:lon] unless pos[:lon].nil?
